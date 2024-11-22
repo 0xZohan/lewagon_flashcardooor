@@ -41,10 +41,10 @@ HOMEPAGE_URL=https://kitt.lewagon.com/camps/your_camp_id/challenges?path=your_pa
 
 ## Requirements.txt 📄
 ```
-selenium
-python-dotenv
-anthropic
-requests
+selenium==4.26.1
+python-dotenv==1.0.1
+anthropic==0.39.0
+requests==2.32.3
 ```
 
 ## Usage 🚀
