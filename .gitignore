@@ -1,1 +1,6 @@
 .env
+__pycache__/
+*.pyc
+*.png
+error-*.html
+page-source-*.html

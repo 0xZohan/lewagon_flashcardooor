@@ -11,9 +11,11 @@ import json
 from typing import List, Dict
 from dotenv import load_dotenv
 from anthropic import Anthropic
+
+
 class FlashcardAutomation:
     def __init__(self, claude_api_key: str):
-        # Setup Chrome options for better stability
+        # Chrome options for better stability
         chrome_options = webdriver.ChromeOptions()
         chrome_options.add_argument('--start-maximized')
         chrome_options.add_argument('--disable-popup-blocking')
@@ -25,18 +27,15 @@ class FlashcardAutomation:
     def wait_and_click(self, selector: str, by: By = By.CSS_SELECTOR, timeout: int = 10) -> bool:
         """Enhanced utility method to wait for element and click it using multiple strategies"""
         try:
-            # First attempt: Standard wait and click
             print(f"Attempting to find element: {selector}")
             element = WebDriverWait(self.driver, timeout).until(
                 EC.presence_of_element_located((by, selector))
             )
             
-            # Scroll into view
             print("Scrolling element into view...")
             self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
-            time.sleep(1)  # Wait for scroll to complete
+            time.sleep(1)  
             
-            # Try multiple click strategies
             try:
                 print("Attempting standard click...")
                 element.click()
@@ -59,7 +58,6 @@ class FlashcardAutomation:
                     except Exception as e3:
                         print(f"Actions chain click failed: {str(e3)}")
                         
-                        # Final attempt: Try to locate by href and navigate
                         try:
                             print("Attempting href navigation...")
                             href = element.get_attribute('href')
@@ -80,15 +78,12 @@ class FlashcardAutomation:
         try:
             print(f"Attempting to expand subcategory...")
             
-            # Scroll the subcategory into view
             self.driver.execute_script("arguments[0].scrollIntoView(true);", subcategory_element)
             time.sleep(0.5)
             
-            # Click to expand
             subcategory_element.click()
             time.sleep(1)
             
-            # Look for flashcards link
             flashcards = self.driver.find_elements(
                 By.CSS_SELECTOR, 
                 "a.exercise.nav-flashcards"
@@ -110,13 +105,11 @@ class FlashcardAutomation:
         try:
             print("Looking for flashcard link...")
             
-            # First try to find the link
             link = self.find_flashcard_link()
             if not link:
                 print("No flashcard link found")
                 return False
             
-            # Try clicking first
             success = self.driver.execute_script('''
                 const links = document.querySelectorAll('a.exercise.nav-flashcards');
                 for (const link of links) {
@@ -130,10 +123,9 @@ class FlashcardAutomation:
             
             if success:
                 print("Successfully clicked flashcard link")
-                time.sleep(2)  # Wait for navigation
+                time.sleep(2) 
                 return True
                 
-            # If clicking fails, try direct navigation
             print("Click failed, trying direct navigation...")
             self.driver.get(link)
             time.sleep(2)
@@ -149,12 +141,10 @@ class FlashcardAutomation:
     def get_flashcard_progress(self) -> tuple[int, int]:
         """Get current progress with comprehensive message detection including completion"""
         try:
-            # Wait for the stats container to be present
             WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "#flashcards-container"))
             )
             
-            # Use JavaScript to parse the progress message
             stats = self.driver.execute_script('''
                 // Get the stats message container
                 const statsContainer = document.querySelector("#flashcards-container > div > div:nth-child(2) > div > div > div.deck-stats-message > div");
@@ -209,7 +199,6 @@ class FlashcardAutomation:
                 print("Could not parse flashcard progress message")
                 return (0, 0)
                 
-            # Print detailed progress info
             if stats.get('isComplete'):
                 print(f"✨ All {stats['total']} cards mastered! ✨")
             else:
@@ -222,7 +211,6 @@ class FlashcardAutomation:
         except Exception as e:
             print(f"Error getting flashcard progress: {str(e)}")
             
-            # Take screenshot and dump page source for debugging
             timestamp = time.strftime("%Y%m%d-%H%M%S")
             self.driver.save_screenshot(f"progress-error-{timestamp}.png")
             
@@ -239,15 +227,12 @@ class FlashcardAutomation:
         try:
             print("\nProcessing flashcard section...")
             
-            # Navigate to flashcards
             if not self.navigate_to_flashcards():
                 print("Failed to navigate to flashcards")
                 return
                 
-            # Wait for page load
             time.sleep(3)
             
-            # Get progress
             completed, total = self.get_flashcard_progress()
             
             if total == 0:
@@ -261,13 +246,11 @@ class FlashcardAutomation:
             remaining = total - completed
             print(f"\nProcessing {remaining} remaining flashcards")
             
-            # Process remaining cards
             cards_processed = 0
             consecutive_errors = 0
             max_errors = 3
             
             while cards_processed < remaining:
-                # Verify we're not complete before continuing
                 current_completed, _ = self.get_flashcard_progress()
                 if current_completed == total:
                     print(f"✨ All cards completed! ✨")
@@ -287,7 +270,6 @@ class FlashcardAutomation:
                         
                 time.sleep(1)
                 
-            # Verify final progress
             final_completed, final_total = self.get_flashcard_progress()
             if final_completed == final_total:
                 print(f"\n✨ Section successfully completed! All {final_total} cards mastered ✨")
@@ -305,10 +287,8 @@ class FlashcardAutomation:
     def get_total_flashcards(self) -> int:
         """Get total number of flashcards in current section"""
         try:
-            # Wait for the stats message to be visible
             self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "deck-stats-message")))
             
-            # Use JavaScript to extract the number from the text
             total_cards = self.driver.execute_script('''
                 const statsText = document.querySelector("div[data-flashcards-mastering-target='deckStatsMessage'] p").textContent;
                 const match = statsText.match(/out of (\\d+) cards/);
@@ -319,7 +299,6 @@ class FlashcardAutomation:
                 print(f"Found {total_cards} total flashcards in this section")
                 return total_cards
             
-            # Fallback method if the above doesn't work
             stats_element = self.driver.find_element(By.CSS_SELECTOR, 
                 "div[data-flashcards-mastering-target='deckStatsMessage'] strong")
             if stats_element:
@@ -336,7 +315,6 @@ class FlashcardAutomation:
             
         except Exception as e:
             print(f"Error getting total flashcards: {str(e)}")
-            # Take screenshot for debugging
             self.driver.save_screenshot("flashcard-count-error.png")
             return 0
 
@@ -345,12 +323,10 @@ class FlashcardAutomation:
         try:
             print("\nProcessing flashcard...")
             
-            # Wait for card content
             WebDriverWait(self.driver, 5).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, ".flashcard-game-card-content"))
             )
             
-            # Check for "I knew it" button to determine if card is flipped
             is_flipped = self.driver.execute_script('''
                 const knewItButton = document.querySelector("#played-card-submit-know");
                 return Boolean(knewItButton && 
@@ -360,7 +336,6 @@ class FlashcardAutomation:
             
             if is_flipped:
                 print("Card is already flipped, moving to next...")
-                # Click "I knew it" to move to next card
                 self.driver.execute_script('''
                     const button = document.querySelector("#played-card-submit-know");
                     if (button) button.click();
@@ -368,7 +343,6 @@ class FlashcardAutomation:
                 time.sleep(2)
                 return True
             
-            # Get question
             question = self.driver.execute_script('''
                 const questionElement = document.querySelector(".flashcard-game-card-content-markdown p");
                 return questionElement ? questionElement.textContent : null;
@@ -380,7 +354,6 @@ class FlashcardAutomation:
                 
             print(f"Found question: {question}")
             
-            # Check for flip button
             flip_button_exists = self.driver.execute_script('''
                 const flipButton = document.querySelector("#flashcard > div > div.flashcard-game-card-front > div > div.flashcard-game-card-content > button");
                 return Boolean(flipButton && 
@@ -392,7 +365,6 @@ class FlashcardAutomation:
                 print("Flip button not found or not visible")
                 return False
             
-            # Get and enter answer
             answer = self.get_claude_response(question)
             
             success = self.driver.execute_script('''
@@ -410,7 +382,6 @@ class FlashcardAutomation:
                 
             print("Entered answer, flipping card...")
             
-            # Click flip button using exact selector
             flip_success = self.driver.execute_script('''
                 const flipButton = document.querySelector("#flashcard > div > div.flashcard-game-card-front > div > div.flashcard-game-card-content > button");
                 if (flipButton) {
@@ -427,7 +398,6 @@ class FlashcardAutomation:
             print("Flipped card, waiting for animation...")
             time.sleep(1)
             
-            # Wait for and click "I knew it" button
             knew_it_success = self.driver.execute_script('''
                 let attempts = 0;
                 const maxAttempts = 10;
@@ -455,7 +425,7 @@ class FlashcardAutomation:
                 return False
                 
             print("Successfully completed flashcard")
-            time.sleep(2)  # Wait for next card
+            time.sleep(2) 
             return True
             
         except Exception as e:
@@ -466,7 +436,7 @@ class FlashcardAutomation:
     def start(self, homepage_url: str):
         """Start automation from homepage"""
         self.driver.get(homepage_url)
-        time.sleep(3)  # Wait for initial page load
+        time.sleep(3)  
         
     def find_all_modules(self) -> List[Dict]:
         """Find all main module categories"""
@@ -559,7 +529,6 @@ class FlashcardAutomation:
             
             if not modules:
                 print("No modules found - trying alternative selector...")
-                # Try an alternative method
                 modules = self.driver.execute_script('''
                     const moduleElements = document.querySelectorAll("[data-original-title]");
                     return Array.from(moduleElements).map(element => ({
@@ -577,7 +546,6 @@ class FlashcardAutomation:
             return modules
         except Exception as e:
             print(f"Error finding modules: {str(e)}")
-            # Take a screenshot for debugging
             self.driver.save_screenshot("module-detection-error.png")
             return []
 
@@ -632,7 +600,6 @@ class FlashcardAutomation:
                 
             print(f"\nNavigating to module: {module['name']}")
             
-            # Try clicking first
             try:
                 element = self.driver.execute_script(f'''
                     return document.querySelector(`a[href="{module['path']}"]`) ||
@@ -647,7 +614,6 @@ class FlashcardAutomation:
             except Exception as click_error:
                 print(f"Click navigation failed: {click_error}")
             
-            # Fallback to direct navigation
             print("Attempting direct navigation...")
             navigation_url = module.get('href') or module.get('path')
             if navigation_url:
@@ -697,7 +663,7 @@ class FlashcardAutomation:
             
             if success:
                 print("Successfully expanded subcategory")
-                time.sleep(2)  # Wait longer for expansion and content load
+                time.sleep(2)  
                 return True
             else:
                 print("Failed to find subcategory element")
@@ -738,7 +704,6 @@ class FlashcardAutomation:
     def process_all_content(self):
         """Main method to process all flashcards with improved subcategory handling"""
         try:
-            # Get all modules
             modules = self.find_all_modules()
             
             if not modules:
@@ -751,14 +716,12 @@ class FlashcardAutomation:
                 print(f"Processing module: {module['name']}")
                 print(f"{'='*20}")
                 
-                # Navigate to module
                 if not self.navigate_to_module(module):
                     print(f"Skipping module {module['name']} due to navigation error")
                     continue
                 
-                time.sleep(2)  # Wait for page load
+                time.sleep(2)
                 
-                # Get subcategories
                 subcategories = self.get_subcategories()
                 
                 if not subcategories:
@@ -769,21 +732,17 @@ class FlashcardAutomation:
                     print(f"\n{'-'*20}")
                     print(f"Checking subcategory: {subcategory['title']}")
                     
-                    # Skip if no flashcards
                     if not subcategory.get('hasFlashcards'):
                         print("No flashcards in this subcategory - skipping")
                         continue
                     
-                    # Expand subcategory
                     if not self.expand_subcategory(subcategory):
                         print("Failed to expand subcategory - skipping")
                         continue
                     
-                    # Process flashcards
                     print("Processing flashcards...")
                     self.process_flashcards_section()
                     
-                    # Return to module page to maintain clean state
                     print("Returning to module page...")
                     if not self.navigate_to_module(module):
                         print("Failed to return to module page - breaking")
@@ -800,10 +759,8 @@ class FlashcardAutomation:
         self.driver.quit()
 
 def main():
-    # Load environment variables
     load_dotenv()
     
-    # Get API key with better error handling
     claude_api_key = os.getenv("CLAUDE_API_KEY")
     if not claude_api_key:
         print("ERROR: CLAUDE_API_KEY not found in environment variables")
@@ -813,8 +770,11 @@ def main():
     if not claude_api_key.startswith("sk-"):
         print("WARNING: API key format looks incorrect (should start with 'sk-')")
     
-    # Starting URL
-    homepage_url = "https://kitt.lewagon.com/camps/1720/challenges?path=00-Setup"
+    homepage_url = os.getenv("HOMEPAGE_URL")
+    if not homepage_url:
+        print("ERROR: HOMEPAGE_URL not found in environment variables")
+        print("Please create a .env file with your URL like: HOMEPAGE_URL=https://kitt.lewagon.com/camps/your_camp_id/challenges?path=your_path_here")
+        return
     
     bot = FlashcardAutomation(claude_api_key)
     try:
