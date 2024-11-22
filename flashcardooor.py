@@ -106,25 +106,45 @@ class FlashcardAutomation:
             return False
         
     def navigate_to_flashcards(self) -> bool:
-        """Navigate to flashcards section and return if successful"""
+        """Navigate to flashcards section with improved link finding"""
         try:
             print("Looking for flashcard link...")
-            flashcard_link = self.driver.execute_script('''
-                return document.querySelector("#exercises_1 > a.exercise.nav-flashcards");
-            ''')
             
-            if not flashcard_link:
+            # First try to find the link
+            link = self.find_flashcard_link()
+            if not link:
                 print("No flashcard link found")
                 return False
+            
+            # Try clicking first
+            success = self.driver.execute_script('''
+                const links = document.querySelectorAll('a.exercise.nav-flashcards');
+                for (const link of links) {
+                    if (link.href === arguments[0]) {
+                        link.click();
+                        return true;
+                    }
+                }
+                return false;
+            ''', link)
+            
+            if success:
+                print("Successfully clicked flashcard link")
+                time.sleep(2)  # Wait for navigation
+                return True
                 
-            print("Found flashcard link, attempting to click...")
-            self.driver.execute_script("arguments[0].click();", flashcard_link)
-            time.sleep(2)  # Wait for navigation
+            # If clicking fails, try direct navigation
+            print("Click failed, trying direct navigation...")
+            self.driver.get(link)
+            time.sleep(2)
             
             return True
+            
         except Exception as e:
             print(f"Error navigating to flashcards: {str(e)}")
+            self.driver.save_screenshot("flashcard-navigation-error.png")
             return False
+
 
     def get_flashcard_progress(self) -> tuple[int, int]:
         """Get current progress (completed/total) from flashcard stats"""
@@ -406,30 +426,281 @@ class FlashcardAutomation:
             print(f"Error calling Claude API: {str(e)}")
             return "Error connecting to Claude API"
     
-    def process_all_content(self):
-        """Main method to process all flashcards across all sections"""
-        modules = self.find_all_modules()
+    def find_all_modules(self) -> List[Dict]:
+        """Find all main module categories using improved JavaScript"""
+        try:
+            print("Searching for modules...")
+            
+            modules = self.driver.execute_script('''
+                const moduleElements = document.querySelectorAll(".modules-nav > a");
+                return Array.from(moduleElements).map(element => {
+                    // Get the name from the module-header-name element
+                    const nameElement = element.querySelector(".module-header-name");
+                    const name = nameElement ? nameElement.textContent.trim() : "";
+                    
+                    // Get the href attribute
+                    const href = element.href;
+                    
+                    // Get data attributes that might be useful for navigation
+                    const path = element.getAttribute("href");
+                    
+                    // Debug info
+                    console.log("Found module:", {
+                        name: name,
+                        href: href,
+                        path: path
+                    });
+                    
+                    return {
+                        name: name || "Unknown",
+                        href: href || "",
+                        path: path || "",
+                        isActive: element.classList.contains("active")
+                    };
+                }).filter(module => module.href); // Only return modules with valid hrefs
+            ''')
+            
+            if not modules:
+                print("No modules found - trying alternative selector...")
+                # Try an alternative method
+                modules = self.driver.execute_script('''
+                    const moduleElements = document.querySelectorAll("[data-original-title]");
+                    return Array.from(moduleElements).map(element => ({
+                        name: element.getAttribute("data-original-title") || "Unknown",
+                        href: element.href,
+                        path: element.getAttribute("href"),
+                        isActive: element.classList.contains("active")
+                    })).filter(module => module.href);
+                ''')
+            
+            print(f"\nFound {len(modules)} modules:")
+            for module in modules:
+                print(f"- {module['name']} ({module['path']})")
+                
+            return modules
+        except Exception as e:
+            print(f"Error finding modules: {str(e)}")
+            # Take a screenshot for debugging
+            self.driver.save_screenshot("module-detection-error.png")
+            return []
+
+    def get_subcategories(self) -> List[Dict]:
+        """Get all subcategories with improved flashcard detection"""
+        try:
+            print("\nFinding subcategories...")
+            
+            subcategories = self.driver.execute_script('''
+                const subcategoryElements = Array.from(
+                    document.querySelectorAll("#days-nav > div.days-nav > div > div.day")
+                );
+                
+                return subcategoryElements.map((element, index) => {
+                    const titleElement = element.querySelector("div");
+                    const title = titleElement ? titleElement.textContent.trim() : "Unknown";
+                    
+                    // Check next sibling for flashcards
+                    const exercisesContainer = element.nextElementSibling;
+                    const hasFlashcards = exercisesContainer && 
+                                        exercisesContainer.querySelector("a.exercise.nav-flashcards");
+                    
+                    return {
+                        title: title,
+                        index: index + 1,
+                        selector: `#days-nav > div.days-nav > div > div:nth-child(${2 * index + 1})`,
+                        hasFlashcards: Boolean(hasFlashcards)
+                    };
+                });
+            ''')
+            
+            if subcategories:
+                print(f"\nFound {len(subcategories)} subcategories:")
+                for subcat in subcategories:
+                    print(f"- {subcat['title']} {'(has flashcards)' if subcat['hasFlashcards'] else ''}")
+            else:
+                print("No subcategories found")
+                
+            return subcategories
+            
+        except Exception as e:
+            print(f"Error finding subcategories: {str(e)}")
+            self.driver.save_screenshot("subcategory-error.png")
+            return []
+
+    def navigate_to_module(self, module: Dict) -> bool:
+        """Navigate to a specific module with improved error handling"""
+        try:
+            if not module.get('path') and not module.get('href'):
+                print("No valid navigation path found for module")
+                return False
+                
+            print(f"\nNavigating to module: {module['name']}")
+            
+            # Try clicking first
+            try:
+                element = self.driver.execute_script(f'''
+                    return document.querySelector(`a[href="{module['path']}"]`) ||
+                        document.querySelector(`a[href="{module['href']}"]`);
+                ''')
+                
+                if element:
+                    print("Found module element, attempting to click...")
+                    self.driver.execute_script("arguments[0].click();", element)
+                    time.sleep(2)
+                    return True
+            except Exception as click_error:
+                print(f"Click navigation failed: {click_error}")
+            
+            # Fallback to direct navigation
+            print("Attempting direct navigation...")
+            navigation_url = module.get('href') or module.get('path')
+            if navigation_url:
+                if not navigation_url.startswith('http'):
+                    base_url = self.driver.current_url.split('?')[0]
+                    navigation_url = f"{base_url}{navigation_url}"
+                
+                print(f"Navigating to: {navigation_url}")
+                self.driver.get(navigation_url)
+                time.sleep(2)
+                return True
+                
+            print("All navigation attempts failed")
+            return False
+            
+        except Exception as e:
+            print(f"Error navigating to module: {str(e)}")
+            self.driver.save_screenshot("navigation-error.png")
+            return False
+
+
+    def expand_subcategory(self, subcategory: Dict) -> bool:
+        """Expand a specific subcategory using JavaScript"""
+        try:
+            print(f"\nExpanding subcategory: {subcategory['title']}")
+            
+            success = self.driver.execute_script('''
+                const element = document.querySelector(arguments[0]);
+                if (!element) return false;
+                
+                // First scroll into view
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                
+                // Check if it's already expanded
+                const nextElement = element.nextElementSibling;
+                const isExpanded = nextElement && 
+                                nextElement.classList.contains('exercises') && 
+                                !nextElement.classList.contains('no-height');
+                                
+                if (!isExpanded) {
+                    // Click to expand if not already expanded
+                    element.click();
+                }
+                
+                return true;
+            ''', subcategory['selector'])
+            
+            if success:
+                print("Successfully expanded subcategory")
+                time.sleep(2)  # Wait longer for expansion and content load
+                return True
+            else:
+                print("Failed to find subcategory element")
+                return False
+                
+        except Exception as e:
+            print(f"Error expanding subcategory: {str(e)}")
+            self.driver.save_screenshot("subcategory-expansion-error.png")
+            return False
+
         
-        for module in modules:
-            print(f"\nProcessing module: {module['name']}")
-            
-            # Click module to expand it
-            subcategories = self.expand_module(module['element'])
-            
-            for subcategory in subcategories:
-                print(f"\nChecking subcategory: {subcategory['title']}")
+    def find_flashcard_link(self) -> str:
+        """Find the flashcard link in the current subcategory"""
+        try:
+            link = self.driver.execute_script('''
+                // Find all exercise containers
+                const exerciseContainers = document.querySelectorAll('.exercises');
                 
-                # Expand subcategory and check for flashcards
-                has_flashcards = self.expand_subcategory(subcategory['element'])
+                // Look through each container for flashcard links
+                for (const container of exerciseContainers) {
+                    const flashcardLink = container.querySelector('a.exercise.nav-flashcards');
+                    if (flashcardLink) {
+                        // Return the href value
+                        return flashcardLink.href;
+                    }
+                }
+                return null;
+            ''')
+            
+            if link:
+                print(f"Found flashcard link: {link}")
+                return link
+            
+            print("No flashcard link found")
+            return None
+            
+        except Exception as e:
+            print(f"Error finding flashcard link: {str(e)}")
+            return None
+        
+    def process_all_content(self):
+        """Main method to process all flashcards with improved subcategory handling"""
+        try:
+            # Get all modules
+            modules = self.find_all_modules()
+            
+            if not modules:
+                print("No modules found")
+                self.driver.save_screenshot("no-modules-found.png")
+                return
+            
+            for module in modules:
+                print(f"\n{'='*20}")
+                print(f"Processing module: {module['name']}")
+                print(f"{'='*20}")
                 
-                if has_flashcards:
-                    print(f"Found flashcards in {subcategory['title']}")
+                # Navigate to module
+                if not self.navigate_to_module(module):
+                    print(f"Skipping module {module['name']} due to navigation error")
+                    continue
+                
+                time.sleep(2)  # Wait for page load
+                
+                # Get subcategories
+                subcategories = self.get_subcategories()
+                
+                if not subcategories:
+                    print("No subcategories found in this module")
+                    continue
+                
+                for subcategory in subcategories:
+                    print(f"\n{'-'*20}")
+                    print(f"Checking subcategory: {subcategory['title']}")
+                    
+                    # Skip if no flashcards
+                    if not subcategory.get('hasFlashcards'):
+                        print("No flashcards in this subcategory - skipping")
+                        continue
+                    
+                    # Expand subcategory
+                    if not self.expand_subcategory(subcategory):
+                        print("Failed to expand subcategory - skipping")
+                        continue
+                    
+                    # Process flashcards
+                    print("Processing flashcards...")
                     self.process_flashcards_section()
                     
-                # Navigate back to ensure we're on the main page
-                self.driver.get(module['href'])
-                time.sleep(2)
-    
+                    # Return to module page to maintain clean state
+                    print("Returning to module page...")
+                    if not self.navigate_to_module(module):
+                        print("Failed to return to module page - breaking")
+                        break
+                
+                print(f"\nCompleted module: {module['name']}")
+                
+        except Exception as e:
+            print(f"Critical error in process_all_content: {str(e)}")
+            self.driver.save_screenshot("critical-error.png")
+
     def cleanup(self):
         """Close the browser"""
         self.driver.quit()
