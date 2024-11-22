@@ -147,99 +147,161 @@ class FlashcardAutomation:
 
 
     def get_flashcard_progress(self) -> tuple[int, int]:
-        """Get current progress (completed/total) from flashcard stats"""
+        """Get current progress with comprehensive message detection including completion"""
         try:
-            # Wait for stats message to be visible
-            self.wait.until(EC.presence_of_element_located((
-                By.CSS_SELECTOR, 
-                "div[data-flashcards-mastering-target='deckStatsMessage']"
-            )))
+            # Wait for the stats container to be present
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "#flashcards-container"))
+            )
             
-            # Extract both completed and total numbers
+            # Use JavaScript to parse the progress message
             stats = self.driver.execute_script('''
-                const statsElement = document.querySelector("div[data-flashcards-mastering-target='deckStatsMessage'] p");
-                if (!statsElement) return null;
+                // Get the stats message container
+                const statsContainer = document.querySelector("#flashcards-container > div > div:nth-child(2) > div > div > div.deck-stats-message > div");
+                if (!statsContainer) return null;
                 
-                const text = statsElement.textContent;
-                const match = text.match(/(\\d+)\\s+out of\\s+(\\d+)\\s+cards/);
-                if (!match) return null;
+                const text = statsContainer.textContent.trim();
                 
-                return {
-                    completed: parseInt(match[1]),
-                    total: parseInt(match[2])
-                };
+                // Check for different message formats
+                if (text.includes("have mastered all")) {
+                    // Format: "You have mastered all X cards in this deck!"
+                    const match = text.match(/mastered all (\d+)/);
+                    if (match) {
+                        const total = parseInt(match[1]);
+                        return {
+                            completed: total,
+                            total: total,
+                            needsWork: false,
+                            isComplete: true
+                        };
+                    }
+                } else if (text.includes("still need to master all")) {
+                    // Format: "You still need to master all X cards in this deck"
+                    const match = text.match(/still need to master all (\d+)/);
+                    if (match) {
+                        const total = parseInt(match[1]);
+                        return {
+                            completed: 0,
+                            total: total,
+                            needsWork: true,
+                            isComplete: false
+                        };
+                    }
+                } else if (text.includes("have mastered")) {
+                    // Format: "You have mastered X out of Y cards in this deck"
+                    const match = text.match(/mastered (\d+) out of (\d+)/);
+                    if (match) {
+                        const completed = parseInt(match[1]);
+                        const total = parseInt(match[2]);
+                        return {
+                            completed: completed,
+                            total: total,
+                            needsWork: completed < total,
+                            isComplete: completed === total
+                        };
+                    }
+                }
+                
+                return null;
             ''')
             
-            if stats:
-                print(f"Current progress: {stats['completed']}/{stats['total']} cards")
-                return (stats['completed'], stats['total'])
+            if not stats:
+                print("Could not parse flashcard progress message")
+                return (0, 0)
+                
+            # Print detailed progress info
+            if stats.get('isComplete'):
+                print(f"✨ All {stats['total']} cards mastered! ✨")
+            else:
+                print(f"Progress: {stats['completed']}/{stats['total']} cards completed")
+                if stats['needsWork']:
+                    print(f"Remaining: {stats['total'] - stats['completed']} cards to master")
             
-            print("Could not determine flashcard progress")
-            return (0, 0)
+            return (stats['completed'], stats['total'])
             
         except Exception as e:
             print(f"Error getting flashcard progress: {str(e)}")
-            self.driver.save_screenshot("progress-error.png")
+            
+            # Take screenshot and dump page source for debugging
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            self.driver.save_screenshot(f"progress-error-{timestamp}.png")
+            
+            try:
+                with open(f"page-source-{timestamp}.html", "w") as f:
+                    f.write(self.driver.page_source)
+            except:
+                pass
+                
             return (0, 0)
 
     def process_flashcards_section(self):
-        """Process all remaining flashcards in current section"""
+        """Process flashcards with improved completion detection"""
         try:
             print("\nProcessing flashcard section...")
             
-            # Navigate to flashcards first
+            # Navigate to flashcards
             if not self.navigate_to_flashcards():
                 print("Failed to navigate to flashcards")
                 return
+                
+            # Wait for page load
+            time.sleep(3)
             
-            # Get initial progress
+            # Get progress
             completed, total = self.get_flashcard_progress()
+            
             if total == 0:
-                print("No flashcards found in this section")
+                print("Could not determine total flashcards")
+                return
+                
+            if completed == total:
+                print(f"✨ Section complete! All {total} cards mastered ✨")
                 return
                 
             remaining = total - completed
-            print(f"\nFound {remaining} remaining flashcards to complete")
-            
-            if remaining == 0:
-                print("All flashcards in this section are already complete")
-                return
-            
-            consecutive_errors = 0
-            max_errors = 3
-            cards_processed = 0
+            print(f"\nProcessing {remaining} remaining flashcards")
             
             # Process remaining cards
+            cards_processed = 0
+            consecutive_errors = 0
+            max_errors = 3
+            
             while cards_processed < remaining:
+                # Verify we're not complete before continuing
+                current_completed, _ = self.get_flashcard_progress()
+                if current_completed == total:
+                    print(f"✨ All cards completed! ✨")
+                    break
+                    
                 success = self.handle_flashcard()
                 if success:
                     cards_processed += 1
                     consecutive_errors = 0
                     print(f"\nProgress: {cards_processed}/{remaining} remaining cards completed")
-                    print(f"Overall progress: {completed + cards_processed}/{total}")
+                    print(f"Overall: {completed + cards_processed}/{total}")
                 else:
                     consecutive_errors += 1
                     if consecutive_errors >= max_errors:
-                        print(f"\nToo many consecutive errors ({max_errors}) - stopping this section")
+                        print(f"\nToo many consecutive errors ({max_errors}) - stopping")
                         break
-                
+                        
                 time.sleep(1)
-            
+                
             # Verify final progress
             final_completed, final_total = self.get_flashcard_progress()
-            print(f"\nSection complete. Final progress: {final_completed}/{final_total}")
+            if final_completed == final_total:
+                print(f"\n✨ Section successfully completed! All {final_total} cards mastered ✨")
+            else:
+                print(f"\nFinal progress: {final_completed}/{final_total}")
+                if final_completed < final_total:
+                    print(f"Note: {final_total - final_completed} cards still need work")
             
-            if final_completed < final_total:
-                print(f"Warning: Section not fully completed. {final_total - final_completed} cards remaining")
-                self.driver.save_screenshot(f"incomplete-section-{time.strftime('%Y%m%d-%H%M%S')}.png")
-                
         except Exception as e:
-            print(f"Error processing flashcards section: {str(e)}")
+            print(f"Error processing flashcards: {str(e)}")
             self.driver.save_screenshot("section-error.png")
-            
         finally:
-            print("\nFinished processing section")
-        
+            print("Finished processing section")
+
     def get_total_flashcards(self) -> int:
         """Get total number of flashcards in current section"""
         try:
@@ -279,54 +341,77 @@ class FlashcardAutomation:
             return 0
 
     def handle_flashcard(self) -> bool:
-        """Process a single flashcard using JavaScript selectors"""
+        """Process a single flashcard with simplified state detection"""
         try:
-            print("\nAnalyzing flashcard state...")
+            print("\nProcessing flashcard...")
             
-            # Check for question using JavaScript
-            question = self.driver.execute_script(
-                'const el = document.querySelector("#flashcard > div > div.flashcard-game-card-front > div > div.flashcard-game-card-content > div > p"); return el ? el.textContent : null;'
+            # Wait for card content
+            WebDriverWait(self.driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".flashcard-game-card-content"))
             )
             
+            # Check for "I knew it" button to determine if card is flipped
+            is_flipped = self.driver.execute_script('''
+                const knewItButton = document.querySelector("#played-card-submit-know");
+                return Boolean(knewItButton && 
+                            window.getComputedStyle(knewItButton).display !== 'none' &&
+                            window.getComputedStyle(knewItButton).visibility !== 'hidden');
+            ''')
+            
+            if is_flipped:
+                print("Card is already flipped, moving to next...")
+                # Click "I knew it" to move to next card
+                self.driver.execute_script('''
+                    const button = document.querySelector("#played-card-submit-know");
+                    if (button) button.click();
+                ''')
+                time.sleep(2)
+                return True
+            
+            # Get question
+            question = self.driver.execute_script('''
+                const questionElement = document.querySelector(".flashcard-game-card-content-markdown p");
+                return questionElement ? questionElement.textContent : null;
+            ''')
+            
             if not question:
-                print("No question found - checking if deck is complete")
+                print("No question found")
                 return False
                 
             print(f"Found question: {question}")
             
-            # Check for answer field
-            answer_field = self.driver.execute_script(
-                'return document.querySelector("#user-guess-text-area")'
-            )
+            # Check for flip button
+            flip_button_exists = self.driver.execute_script('''
+                const flipButton = document.querySelector("#flashcard > div > div.flashcard-game-card-front > div > div.flashcard-game-card-content > button");
+                return Boolean(flipButton && 
+                            window.getComputedStyle(flipButton).display !== 'none' &&
+                            window.getComputedStyle(flipButton).visibility !== 'hidden');
+            ''')
             
-            if not answer_field:
-                print("No answer field found")
+            if not flip_button_exists:
+                print("Flip button not found or not visible")
+                return False
+            
+            # Get and enter answer
+            answer = self.get_claude_response(question)
+            
+            success = self.driver.execute_script('''
+                const textarea = document.querySelector('#user-guess-text-area');
+                if (textarea) {
+                    textarea.value = arguments[0];
+                    return true;
+                }
+                return false;
+            ''', answer)
+            
+            if not success:
+                print("Failed to enter answer")
                 return False
                 
-            # Get existing text
-            existing_text = self.driver.execute_script(
-                'return document.querySelector("#user-guess-text-area").value'
-            )
+            print("Entered answer, flipping card...")
             
-            # Check if we need to input an answer
-            if not existing_text:
-                print("Getting Claude's response...")
-                answer = self.get_claude_response(question)
-                print("Got response from Claude")
-                
-                # Input answer using JavaScript
-                self.driver.execute_script(
-                    'arguments[0].value = arguments[1];', 
-                    answer_field, 
-                    answer
-                )
-                print("Entered answer")
-            else:
-                print("Answer field already has text - using existing answer")
-            
-            # Click flip button using JavaScript
-            print("Clicking flip button...")
-            success = self.driver.execute_script('''
+            # Click flip button using exact selector
+            flip_success = self.driver.execute_script('''
                 const flipButton = document.querySelector("#flashcard > div > div.flashcard-game-card-front > div > div.flashcard-game-card-content > button");
                 if (flipButton) {
                     flipButton.click();
@@ -335,37 +420,49 @@ class FlashcardAutomation:
                 return false;
             ''')
             
-            if not success:
+            if not flip_success:
                 print("Failed to click flip button")
                 return False
                 
+            print("Flipped card, waiting for animation...")
             time.sleep(1)
             
-            # Click "I knew it" button using JavaScript
-            print("Clicking 'I knew it' button...")
-            success = self.driver.execute_script('''
-                const knewItButton = document.querySelector("#played-card-submit-know");
-                if (knewItButton) {
-                    knewItButton.click();
-                    return true;
+            # Wait for and click "I knew it" button
+            knew_it_success = self.driver.execute_script('''
+                let attempts = 0;
+                const maxAttempts = 10;
+                const checkAndClick = () => {
+                    const button = document.querySelector("#played-card-submit-know");
+                    if (button && 
+                        window.getComputedStyle(button).display !== 'none' &&
+                        window.getComputedStyle(button).visibility !== 'hidden') {
+                        button.click();
+                        return true;
+                    }
+                    return false;
+                };
+                
+                // Try multiple times to find and click the button
+                while (attempts < maxAttempts) {
+                    if (checkAndClick()) return true;
+                    attempts++;
                 }
                 return false;
             ''')
             
-            if not success:
+            if not knew_it_success:
                 print("Failed to click 'I knew it' button")
                 return False
                 
-            time.sleep(2)
-            
             print("Successfully completed flashcard")
+            time.sleep(2)  # Wait for next card
             return True
             
         except Exception as e:
-            print(f"Error processing flashcard: {str(e)}")
+            print(f"Error handling flashcard: {str(e)}")
             self.driver.save_screenshot(f"flashcard-error-{time.strftime('%Y%m%d-%H%M%S')}.png")
             return False
-
+              
     def start(self, homepage_url: str):
         """Start automation from homepage"""
         self.driver.get(homepage_url)
@@ -613,21 +710,18 @@ class FlashcardAutomation:
 
         
     def find_flashcard_link(self) -> str:
-        """Find the flashcard link in the current subcategory"""
+        """Find the flashcard link in the current subcategory with path preservation"""
         try:
             link = self.driver.execute_script('''
-                // Find all exercise containers
-                const exerciseContainers = document.querySelectorAll('.exercises');
+                // Find all exercise containers that are currently visible
+                const exerciseContainers = document.querySelectorAll('.exercises:not(.no-height)');
                 
-                // Look through each container for flashcard links
-                for (const container of exerciseContainers) {
-                    const flashcardLink = container.querySelector('a.exercise.nav-flashcards');
-                    if (flashcardLink) {
-                        // Return the href value
-                        return flashcardLink.href;
-                    }
-                }
-                return null;
+                // Get the most recently expanded container
+                const container = exerciseContainers[exerciseContainers.length - 1];
+                if (!container) return null;
+                
+                const flashcardLink = container.querySelector('a.exercise.nav-flashcards');
+                return flashcardLink ? flashcardLink.href : null;
             ''')
             
             if link:
