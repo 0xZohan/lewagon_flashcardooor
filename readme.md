@@ -24,7 +24,7 @@ This automation tool:
 1. Clone the repository:
 ```bash
 git clone https://github.com/0xZohan/lewagon_flashcardooor.git
-cd lewagon-flashcard-automation
+cd lewagon_flashcardooor
 ```
 
 2. Install required packages:
